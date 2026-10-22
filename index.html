@@ -79,7 +79,7 @@ tr:hover td { background: var(--head); }
     <summary>Thresholds and weights</summary>
     <div class="bar" id="params"></div>
     <ul class="notes">
-      <li><b>Case</b>: one patient at one hospital. <b>Completed</b>: a cost was recorded. The cost sorts it into ER / outpatient (below the threshold) or inpatient.</li>
+      <li><b>Case</b>: one case at one hospital. <b>Completed</b>: a cost was recorded. The cost sorts it into ER / outpatient (below the threshold) or inpatient.</li>
       <li><b>No cost</b>: older than the minimum age and still without a cost. <b>Pending</b>: younger than the minimum age; left out of every rate, completed or not, so recent months are not judged before costs can arrive.</li>
       <li><b>Success</b>: completed share of the cases older than the minimum age, each weighted by its age (half-life), pulled towards the overall rate for hospitals with few cases (prior weight).</li>
       <li><b>Recent</b>: the success rate of the cases in the recent window just past the minimum age, against all older ones. ▼ / ▲ when the two differ by at least the alert threshold, with at least 2 cases on each side.</li>
