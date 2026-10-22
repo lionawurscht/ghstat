@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hospital Scores</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e2e2dc;
+  --accent: #2f6f9f; --good: #2e7d4f; --bad: #b3412f; --warn: #a66a00; --head: #efefea;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161716; --panel: #1f201f; --ink: #e8e8e3; --muted: #9a9a93; --line: #34352f;
+    --accent: #7db3db; --good: #6cc192; --bad: #e88473; --warn: #e0ac4f; --head: #262725;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161716; --panel: #1f201f; --ink: #e8e8e3; --muted: #9a9a93; --line: #34352f;
+  --accent: #7db3db; --good: #6cc192; --bad: #e88473; --warn: #e0ac4f; --head: #262725;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1500px; margin: 0 auto; padding: 20px 16px 40px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin: 0 0 16px; }
+.bar { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; background: var(--panel);
+       border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+input, select, button { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+                        border-radius: 6px; padding: 5px 8px; }
+input[type=number] { width: 84px; }
+input[type=search] { width: 200px; }
+button { cursor: pointer; }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: var(--bg); }
+.seg button.on { background: var(--accent); color: #fff; }
+details { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+summary { cursor: pointer; font-weight: 600; }
+details .bar { border: 0; padding: 10px 0 0; margin: 0; }
+.notes { color: var(--muted); font-size: 13px; margin: 8px 0 0; padding-left: 18px; }
+.notes li { margin: 3px 0; }
+.wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+th { background: var(--head); position: sticky; top: 0; cursor: pointer; user-select: none; font-size: 12px; }
+th[title] { text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
+th.l, td.l { text-align: left; }
+td.name { white-space: normal; min-width: 220px; }
+td.name small { display: block; color: var(--muted); }
+tr:hover td { background: var(--head); }
+.score { font-weight: 600; }
+.hi { color: var(--good); } .lo { color: var(--bad); } .mid { color: var(--warn); }
+.down { color: var(--bad); font-weight: 600; } .up { color: var(--good); font-weight: 600; }
+.dim { color: var(--muted); }
+.count { color: var(--muted); margin: 8px 2px; font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Hospital scores</h1>
+  <p class="sub" id="asof"></p>
+
+  <div class="bar">
+    <label>View
+      <span class="seg" id="view"><button data-v="site" class="on">Sites</button><button data-v="group">Groups</button></span>
+    </label>
+    <label>Country
+      <select id="country"><option value="">All</option><option>DE</option><option>AT</option></select>
+    </label>
+    <label>State <select id="state"></select></label>
+    <label>Search <input type="search" id="q" placeholder="Name or city"></label>
+    <label>Min. cases <input type="number" id="minCases" min="1" value="3"></label>
+    <label>&nbsp;<button class="primary" id="csv">Export CSV</button></label>
+  </div>
+
+  <details>
+    <summary>Thresholds and weights</summary>
+    <div class="bar" id="params"></div>
+    <ul class="notes">
+      <li><b>Case</b>: one patient at one hospital. <b>Completed</b>: a cost was recorded. The cost sorts it into ER / outpatient (below the threshold) or inpatient.</li>
+      <li><b>No cost</b>: older than the minimum age and still without a cost. <b>Pending</b>: younger than the minimum age; left out of every rate, completed or not, so recent months are not judged before costs can arrive.</li>
+      <li><b>Success</b>: completed share of the cases older than the minimum age, each weighted by its age (half-life), pulled towards the overall rate for hospitals with few cases (prior weight).</li>
+      <li><b>Recent</b>: the success rate of the cases in the recent window just past the minimum age, against all older ones. ▼ / ▲ when the two differ by at least the alert threshold, with at least 2 cases on each side.</li>
+      <li><b>Days to payment</b>: from the service date to the payment, a weighted median over completed cases. A median at or below "fast" scores 1, at or above "slow" 0.</li>
+      <li><b>Score</b>: success and payment speed, weighted, 0 to 100. The ER and inpatient scores use the same success rate (a case without a cost has no type) and that type's payment speed.</li>
+    </ul>
+  </details>
+
+  <div class="count" id="count"></div>
+  <div class="wrap"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
+</main>
+<script src="data.js"></script>
+<script>
+"use strict";
+const D = window.DATA;
+const DAY = 864e5, MONTH = 30.44;
+const asOf = new Date(D.asOf + "T00:00:00Z"), epoch = new Date(D.epoch + "T00:00:00Z");
+
+const PARAMS = [
+  ["cut", "Inpatient from (cost)", D.bands.filter(b => b > 0), 750],
+  ["minAge", "Min. age (days)", null, 120],
+  ["halfLife", "Half-life (months)", null, 12],
+  ["recent", "Recent window (months)", null, 6],
+  ["drop", "Alert at (points)", null, 20],
+  ["prior", "Prior weight (cases)", null, 3],
+  ["wRate", "Weight success", null, 70],
+  ["wSpeed", "Weight speed", null, 30],
+  ["fast", "Fast (days)", null, 45],
+  ["slow", "Slow (days)", null, 240],
+];
+const P = {};
+const box = document.getElementById("params");
+for (const [key, label, options, def] of PARAMS) {
+  P[key] = def;
+  const l = document.createElement("label");
+  l.textContent = label;
+  let el;
+  if (options) {
+    el = document.createElement("select");
+    for (const o of options) el.add(new Option(o, o, false, o === def));
+  } else {
+    el = document.createElement("input");
+    Object.assign(el, { type: "number", min: 0, value: def });
+  }
+  el.addEventListener("input", () => { const v = parseFloat(el.value); if (!isNaN(v)) { P[key] = v; render(); } });
+  l.appendChild(el); box.appendChild(l);
+}
+const reset = document.createElement("label");
+reset.innerHTML = "&nbsp;<button>Defaults</button>";
+reset.querySelector("button").onclick = () => {
+  PARAMS.forEach(([key, , , def], i) => { P[key] = def; box.querySelectorAll("input,select")[i].value = def; });
+  render();
+};
+box.appendChild(reset);
+
+let view = "site", sortKey = "score", sortDir = -1;
+const $ = id => document.getElementById(id);
+$("asof").textContent = "Data as of " + asOf.toLocaleDateString("de-DE") + ".";
+document.querySelectorAll("#view button").forEach(b => b.onclick = () => {
+  view = b.dataset.v;
+  document.querySelectorAll("#view button").forEach(x => x.classList.toggle("on", x === b));
+  render();
+});
+function fillStates() {
+  const c = $("country").value, keep = $("state").value;
+  const states = [...new Set(D.hospitals.filter(h => !c || h.country === c).map(h => h.state))].sort();
+  $("state").innerHTML = '<option value="">All</option>' + states.map(s => `<option>${s}</option>`).join("");
+  if (states.includes(keep)) $("state").value = keep;
+}
+$("country").onchange = () => { fillStates(); render(); };
+["state", "q", "minCases"].forEach(id => $(id).addEventListener("input", render));
+fillStates();
+
+function wmedian(xs) {               // [value, weight]
+  if (!xs.length) return null;
+  xs.sort((a, b) => a[0] - b[0]);
+  const half = xs.reduce((s, x) => s + x[1], 0) / 2;
+  let acc = 0;
+  for (const [v, w] of xs) { acc += w; if (acc >= half) return v; }
+  return xs[xs.length - 1][0];
+}
+const clamp = x => Math.max(0, Math.min(1, x));
+
+function compute() {
+  const cutBand = D.bands.indexOf(P.cut);
+  const recentEnd = P.minAge + P.recent * MONTH;
+  const rows = new Map();
+  const key = h => view === "site" ? h.name : h.group;
+  for (const h of D.hospitals) {
+    const k = key(h);
+    if (!rows.has(k)) rows.set(k, { name: k, sites: [], cases: 0, er: 0, inp: 0, nocost: 0, pending: 0,
+      W: 0, Wd: 0, rn: 0, rd: 0, en: 0, ed: 0, payER: [], payInp: [], lastWeek: -1, lastPaid: "" });
+    const r = rows.get(k);
+    r.sites.push(h);
+    if (h.lastPaid > r.lastPaid) r.lastPaid = h.lastPaid;
+  }
+  let GW = 0, GWd = 0;
+  for (const [hi, week, done, band, pay, n] of D.cells) {
+    const r = rows.get(key(D.hospitals[hi]));
+    const start = epoch.getTime() + (week * 7 + 3) * DAY;
+    const age = (asOf - start) / DAY;
+    const inp = done && band >= cutBand;
+    r.cases += n;
+    r.lastWeek = Math.max(r.lastWeek, week);
+    if (done) inp ? r.inp += n : r.er += n;
+    if (age < P.minAge) { r.pending += n; continue; }
+    if (!done) r.nocost += n;
+    const w = Math.pow(0.5, age / MONTH / Math.max(P.halfLife, 0.1));
+    r.W += w * n; r.Wd += w * n * done; GW += w * n; GWd += w * n * done;
+    if (age <= recentEnd) { r.rn += n; r.rd += n * done; } else { r.en += n; r.ed += n * done; }
+    if (done && pay >= 0) (inp ? r.payInp : r.payER).push([(pay + 0.5) * D.payStep, w * n]);
+  }
+  const prior = GW ? GWd / GW : 0;
+  const speed = m => m == null ? null : clamp((P.slow - m) / Math.max(P.slow - P.fast, 1));
+  const score = (rate, sp) => rate == null ? null
+    : 100 * (sp == null ? rate : (P.wRate * rate + P.wSpeed * sp) / Math.max(P.wRate + P.wSpeed, 1e-9));
+  const out = [];
+  for (const r of rows.values()) {
+    const judged = r.cases - r.pending;
+    r.rate = judged ? (r.Wd + P.prior * prior) / (r.W + P.prior) : null;
+    r.recentRate = r.rn ? r.rd / r.rn : null;
+    r.earlierRate = r.en ? r.ed / r.en : null;
+    r.trend = 0;
+    if (r.rn >= 2 && r.en >= 2) {
+      const d = (r.recentRate - r.earlierRate) * 100;
+      r.trend = d <= -P.drop ? -1 : d >= P.drop ? 1 : 0;
+    }
+    r.daysER = wmedian(r.payER.slice());
+    r.daysInp = wmedian(r.payInp.slice());
+    r.daysAll = wmedian(r.payER.concat(r.payInp));
+    r.score = score(r.rate, speed(r.daysAll));
+    r.scoreER = r.er ? score(r.rate, speed(r.daysER)) : null;
+    r.scoreInp = r.inp ? score(r.rate, speed(r.daysInp)) : null;
+    const one = f => { const v = [...new Set(r.sites.map(f))]; return v.length === 1 ? v[0] : "several"; };
+    r.city = one(s => s.city); r.state = one(s => s.state); r.country = one(s => s.country);
+    r.group = view === "site" ? r.sites[0].group : r.name;
+    r.nSites = r.sites.length;
+    r.lastCase = r.lastWeek < 0 ? "" : new Date(epoch.getTime() + r.lastWeek * 7 * DAY).toISOString().slice(0, 7);
+    out.push(r);
+  }
+  return out;
+}
+
+const pct = x => x == null ? "" : Math.round(x * 100) + "%";
+const num = x => x == null ? "" : Math.round(x);
+const days = x => x == null ? "" : x > 24 * D.payStep ? (24 * D.payStep) + "+" : Math.round(x);
+const cls = s => s == null ? "" : s >= 70 ? "hi" : s >= 45 ? "mid" : "lo";
+const COLS = [
+  ["name", "Hospital", "l", r => `<td class="l name">${esc(r.name)}${view === "site" && r.group !== r.name ? `<small>${esc(r.group)}</small>` : view === "group" && r.nSites > 1 ? `<small>${r.nSites} sites</small>` : ""}</td>`],
+  ["city", "City", "l"], ["state", "State", "l"], ["country", "Country", "l"],
+  ["cases", "Cases", "", null, "All cases, pending included"],
+  ["er", "ER", "", null, "Completed, cost below the inpatient threshold"],
+  ["inp", "Inpatient", "", null, "Completed, cost at or above the inpatient threshold"],
+  ["nocost", "No cost", "", null, "Older than the minimum age, no cost"],
+  ["pending", "Pending", "", null, "Younger than the minimum age"],
+  ["rate", "Success", "", r => `<td>${pct(r.rate)}</td>`, "Weighted completed share, pulled towards the overall rate for few cases"],
+  ["recentRate", "Recent", "", r => {
+    if (r.recentRate == null) return '<td class="dim">–</td>';
+    const arrow = r.trend < 0 ? '<span class="down">▼ </span>' : r.trend > 0 ? '<span class="up">▲ </span>' : "";
+    return `<td>${arrow}${r.rd}/${r.rn} <span class="dim">vs ${r.earlierRate == null ? "–" : pct(r.earlierRate)}</span></td>`;
+  }, "Completed / cases in the recent window, against the earlier rate"],
+  ["daysER", "Days ER", "", r => `<td>${days(r.daysER)}</td>`, "Service to payment, median, ER"],
+  ["daysInp", "Days inp.", "", r => `<td>${days(r.daysInp)}</td>`, "Service to payment, median, inpatient"],
+  ["score", "Score", "", r => `<td class="score ${cls(r.score)}">${num(r.score)}</td>`],
+  ["scoreER", "Score ER", "", r => `<td class="${cls(r.scoreER)}">${num(r.scoreER)}</td>`],
+  ["scoreInp", "Score inp.", "", r => `<td class="${cls(r.scoreInp)}">${num(r.scoreInp)}</td>`],
+  ["lastCase", "Last case", ""], ["lastPaid", "Last payment", ""],
+];
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function visible() {
+  const c = $("country").value, st = $("state").value, q = $("q").value.trim().toLowerCase();
+  const min = parseInt($("minCases").value) || 1;
+  return compute().filter(r =>
+    r.cases >= min && (!c || r.sites.some(s => s.country === c)) && (!st || r.sites.some(s => s.state === st))
+    && (!q || (r.name + " " + r.group + " " + r.sites.map(s => s.name + " " + s.city).join(" ")).toLowerCase().includes(q)));
+}
+
+function render() {
+  const rows = visible();
+  rows.sort((a, b) => {
+    const x = a[sortKey], y = b[sortKey];
+    if (x == null || x === "") return 1;
+    if (y == null || y === "") return -1;
+    return (typeof x === "string" ? x.localeCompare(y, "de") : x - y) * sortDir || b.cases - a.cases;
+  });
+  $("thead").innerHTML = "<tr>" + COLS.map(([k, label, c, , title]) =>
+    `<th class="${c}" data-k="${k}"${title ? ` title="${esc(title)}"` : ""}>${label}${k === sortKey ? (sortDir > 0 ? " ↑" : " ↓") : ""}</th>`).join("") + "</tr>";
+  $("tbody").innerHTML = rows.map(r => "<tr>" + COLS.map(([k, , c, f]) => f ? f(r) : `<td class="${c}">${esc(r[k] ?? "")}</td>`).join("") + "</tr>").join("");
+  const n = rows.reduce((s, r) => s + r.cases, 0);
+  $("count").textContent = `${rows.length} ${view === "site" ? "sites" : "entries"}, ${n} cases`;
+  document.querySelectorAll("#thead th").forEach(th => th.onclick = () => {
+    const k = th.dataset.k;
+    if (k === sortKey) sortDir = -sortDir; else { sortKey = k; sortDir = ["name", "city", "state", "country"].includes(k) ? 1 : -1; }
+    render();
+  });
+}
+
+$("csv").onclick = () => {
+  const head = ["hospital", "group", "city", "state", "country", "cases", "er", "inpatient", "no_cost", "pending",
+    "success", "recent_completed", "recent_cases", "earlier_rate", "trend", "days_er", "days_inpatient",
+    "score", "score_er", "score_inpatient", "last_case", "last_payment"];
+  const r2 = x => x == null ? "" : Math.round(x * 1000) / 1000;
+  const lines = visible().map(r => [r.name, r.group, r.city, r.state, r.country, r.cases, r.er, r.inp, r.nocost, r.pending,
+    r2(r.rate), r.rd, r.rn, r2(r.earlierRate), r.trend, num(r.daysER), num(r.daysInp),
+    num(r.score), num(r.scoreER), num(r.scoreInp), r.lastCase, r.lastPaid]);
+  const q = v => /[",\n;]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v;
+  const csv = "﻿" + [head, ...lines].map(l => l.map(q).join(",")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = `hospitals-${view}-${D.asOf}.csv`;
+  a.click();
+};
+render();
+</script>
+</body>
+</html>
